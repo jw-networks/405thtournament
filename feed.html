@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OBS Feed Slot</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; background:transparent; overflow:hidden; }
+    iframe { width:100%; height:100%; border:0; }
+  </style>
+</head>
+<body>
+  <iframe id="vdo" allow="camera; microphone; autoplay; display-capture" src="about:blank"></iframe>
+
+  <script>
+    // 1) Set this to your published CSV URL (OBS_EXPORT tab)
+    const EXPORT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpG2Z5s4KvRw5iYM8AokvwxM6HEE5q1U2WWDOyOfyz3UBrAFnV80t7HVyK9iuA8SNxMS1bo0kj-e2Z/pub?gid=2053858318&single=true&output=csv";
+
+    const params = new URLSearchParams(location.search);
+    const slot = params.get("slot");      // "1".."8"
+    const type = params.get("type");      // "cam" or "game"
+    if (!slot || !type) throw new Error("Missing ?slot= and/or ?type=");
+
+    function parseCsvKeyValue(text) {
+      // expects: key,value\nkey,value\n ...
+      const lines = text.trim().split(/\r?\n/);
+      const out = {};
+      for (let i = 1; i < lines.length; i++) { // skip header row
+        const line = lines[i];
+        // Basic CSV split (handles common cases). Keep sheet values simple (no commas) for best results.
+        const comma = line.indexOf(",");
+        if (comma === -1) continue;
+        const k = line.slice(0, comma).replace(/^"|"$/g, "").trim();
+        const v = line.slice(comma + 1).replace(/^"|"$/g, "").trim();
+        if (k) out[k] = v;
+      }
+      return out;
+    }
+
+    async function refresh() {
+      // cache-buster so OBS/GitHub caching doesn’t bite you
+      const url = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
+      const csv = await res.text();
+      const kv = parseCsvKeyValue(csv);
+
+      const key = `slot${slot}_${type}`;
+      const nextSrc = kv[key] || "about:blank";
+
+      const iframe = document.getElementById("vdo");
+      if (iframe.src !== nextSrc) iframe.src = nextSrc;
+    }
+
+    // Initial load + polling
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>

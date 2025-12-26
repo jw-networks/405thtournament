@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OBS Text Slot</title>
+  <style>
+    html, body { margin:0; padding:0; background:transparent; }
+    #t {
+      font-family: Arial, sans-serif;
+      font-size: 42px;
+      font-weight: 700;
+      color: white;
+      text-shadow: 0 2px 6px rgba(0,0,0,.8);
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="t"></div>
+
+  <script>
+    const EXPORT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpG2Z5s4KvRw5iYM8AokvwxM6HEE5q1U2WWDOyOfyz3UBrAFnV80t7HVyK9iuA8SNxMS1bo0kj-e2Z/pub?gid=2053858318&single=true&output=csv";
+
+    const params = new URLSearchParams(location.search);
+    const slot = params.get("slot");      // "1".."8"
+    const field = params.get("field");    // "name" or "team"
+    if (!slot || !field) throw new Error("Missing ?slot= and/or ?field=");
+
+    function parseCsvKeyValue(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const out = {};
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        const comma = line.indexOf(",");
+        if (comma === -1) continue;
+        const k = line.slice(0, comma).replace(/^"|"$/g, "").trim();
+        const v = line.slice(comma + 1).replace(/^"|"$/g, "").trim();
+        if (k) out[k] = v;
+      }
+      return out;
+    }
+
+    async function refresh() {
+      const url = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
+      const csv = await res.text();
+      const kv = parseCsvKeyValue(csv);
+
+      const key = `slot${slot}_${field}`;
+      document.getElementById("t").textContent = kv[key] || "";
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
