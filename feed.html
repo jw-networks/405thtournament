@@ -13,10 +13,9 @@
   <iframe id="vdo" allow="camera; microphone; autoplay; display-capture" src="about:blank"></iframe>
 
   <script>
-    // Use DIRECT export (typically much faster than "Publish to web" CSV)
-    const SHEET_ID = "1I_w8pl76OuNL-0dYW9WT2ATRgMwt6Wcj2DYoRrtJL20";
-    const GID = "2053858318";
-    const EXPORT_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
+    // 1) Set this to your published CSV URL (OBS_EXPORT tab)
+    const EXPORT_CSV_URL =
+      "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpG2Z5s4KvRw5iYM8AokvwxM6HEE5q1U2WWDOyOfyz3UBrAFnV80t7HVyK9iuA8SNxMS1bo0kj-e2Z/pub?gid=2053858318&single=true&output=csv";
 
     const params = new URLSearchParams(location.search);
     const slot = params.get("slot");      // "1".."8"
@@ -24,10 +23,12 @@
     if (!slot || !type) throw new Error("Missing ?slot= and/or ?type=");
 
     function parseCsvKeyValue(text) {
+      // expects: key,value\nkey,value\n ...
       const lines = text.trim().split(/\r?\n/);
       const out = {};
       for (let i = 1; i < lines.length; i++) { // skip header row
         const line = lines[i];
+        // Basic CSV split (handles common cases). Keep sheet values simple (no commas) for best results.
         const comma = line.indexOf(",");
         if (comma === -1) continue;
         const k = line.slice(0, comma).replace(/^"|"$/g, "").trim();
@@ -37,20 +38,40 @@
       return out;
     }
 
+    const ALLOW_ATTR = "camera; microphone; autoplay; display-capture";
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Replace the iframe node entirely to force OBS/CEF to drop the old page/WebRTC session immediately.
+    async function hardSwapTo(url) {
+      const old = document.getElementById("vdo");
+      if (!old) return;
+
+      // Step 1: force teardown
+      try { old.src = "about:blank"; } catch (e) {}
+      await sleep(50);
+
+      // Step 2: replace node (stronger than just changing src)
+      const fresh = document.createElement("iframe");
+      fresh.id = "vdo";
+      fresh.allow = ALLOW_ATTR;
+      fresh.style.width = "100%";
+      fresh.style.height = "100%";
+      fresh.style.border = "0";
+      fresh.src = url;
+
+      old.parentNode.replaceChild(fresh, old);
+    }
+
+    // Track the last base URL so we only swap when the sheet value actually changes
     let lastBaseSrc = null;
 
     async function refresh() {
-      // hard cache-bust the CSV request
-      const csvUrl = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "_t=" + Date.now();
-
-      const res = await fetch(csvUrl, {
-        cache: "no-store",
-        headers: {
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          "Pragma": "no-cache"
-        }
-      });
-
+      // cache-buster so OBS/GitHub caching doesn’t bite you
+      const url = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
 
       const csv = await res.text();
@@ -59,23 +80,24 @@
       const key = `slot${slot}_${type}`;
       const baseSrc = (kv[key] || "about:blank").trim();
 
+      // Only act if the sheet value actually changed
       if (baseSrc !== lastBaseSrc) {
         lastBaseSrc = baseSrc;
 
-        const iframe = document.getElementById("vdo");
-
-        if (baseSrc === "about:blank" || baseSrc === "") {
-          iframe.src = "about:blank";
-        } else {
-          // force a true navigation when value changes
-          const bustedSrc = baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
-          iframe.src = bustedSrc;
+        if (!baseSrc || baseSrc === "about:blank") {
+          await hardSwapTo("about:blank");
+          return;
         }
+
+        // Force a true navigation on swap (helps with redirect + caching edge cases)
+        const bustedSrc = baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
+        await hardSwapTo(bustedSrc);
       }
     }
 
+    // Initial load + polling
     refresh();
-    setInterval(refresh, 750); // faster polling; you can raise/lower
+    setInterval(refresh, 750);
   </script>
 </body>
 </html>
