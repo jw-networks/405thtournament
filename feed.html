@@ -27,7 +27,6 @@
       const out = {};
       for (let i = 1; i < lines.length; i++) { // skip header row
         const line = lines[i];
-        // Basic CSV split (handles common cases). Keep sheet values simple (no commas) for best results.
         const comma = line.indexOf(",");
         if (comma === -1) continue;
         const k = line.slice(0, comma).replace(/^"|"$/g, "").trim();
@@ -37,19 +36,35 @@
       return out;
     }
 
+    // Track the last "base" URL so we only reload when the sheet value actually changes
+    let lastBaseSrc = null;
+
     async function refresh() {
-      // cache-buster so OBS/GitHub caching doesn’t bite you
-      const url = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
-      const res = await fetch(url, { cache: "no-store" });
+      // Cache-buster for the CSV fetch so browser/OBS caching doesn’t bite you
+      const csvUrl = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      const res = await fetch(csvUrl, { cache: "no-store" });
       if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
+
       const csv = await res.text();
       const kv = parseCsvKeyValue(csv);
 
       const key = `slot${slot}_${type}`;
-      const nextSrc = kv[key] || "about:blank";
+      const baseSrc = (kv[key] || "about:blank").trim();
 
-      const iframe = document.getElementById("vdo");
-      if (iframe.src !== nextSrc) iframe.src = nextSrc;
+      // If the sheet value changed, force a true iframe navigation by adding a cache-buster
+      if (baseSrc !== lastBaseSrc) {
+        lastBaseSrc = baseSrc;
+
+        const iframe = document.getElementById("vdo");
+
+        if (baseSrc === "about:blank" || baseSrc === "") {
+          iframe.src = "about:blank";
+        } else {
+          const bustedSrc =
+            baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
+          iframe.src = bustedSrc;
+        }
+      }
     }
 
     // Initial load + polling
