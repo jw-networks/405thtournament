@@ -13,8 +13,10 @@
   <iframe id="vdo" allow="camera; microphone; autoplay; display-capture" src="about:blank"></iframe>
 
   <script>
-    // 1) Set this to your published CSV URL (OBS_EXPORT tab)
-    const EXPORT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpG2Z5s4KvRw5iYM8AokvwxM6HEE5q1U2WWDOyOfyz3UBrAFnV80t7HVyK9iuA8SNxMS1bo0kj-e2Z/pub?gid=2053858318&single=true&output=csv";
+    // Use DIRECT export (typically much faster than "Publish to web" CSV)
+    const SHEET_ID = "1I_w8pl76OuNL-0dYW9WT2ATRgMwt6Wcj2DYoRrtJL20";
+    const GID = "2053858318";
+    const EXPORT_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
 
     const params = new URLSearchParams(location.search);
     const slot = params.get("slot");      // "1".."8"
@@ -22,7 +24,6 @@
     if (!slot || !type) throw new Error("Missing ?slot= and/or ?type=");
 
     function parseCsvKeyValue(text) {
-      // expects: key,value\nkey,value\n ...
       const lines = text.trim().split(/\r?\n/);
       const out = {};
       for (let i = 1; i < lines.length; i++) { // skip header row
@@ -36,13 +37,20 @@
       return out;
     }
 
-    // Track the last "base" URL so we only reload when the sheet value actually changes
     let lastBaseSrc = null;
 
     async function refresh() {
-      // Cache-buster for the CSV fetch so browser/OBS caching doesn’t bite you
-      const csvUrl = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
-      const res = await fetch(csvUrl, { cache: "no-store" });
+      // hard cache-bust the CSV request
+      const csvUrl = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "_t=" + Date.now();
+
+      const res = await fetch(csvUrl, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache"
+        }
+      });
+
       if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
 
       const csv = await res.text();
@@ -51,7 +59,6 @@
       const key = `slot${slot}_${type}`;
       const baseSrc = (kv[key] || "about:blank").trim();
 
-      // If the sheet value changed, force a true iframe navigation by adding a cache-buster
       if (baseSrc !== lastBaseSrc) {
         lastBaseSrc = baseSrc;
 
@@ -60,16 +67,15 @@
         if (baseSrc === "about:blank" || baseSrc === "") {
           iframe.src = "about:blank";
         } else {
-          const bustedSrc =
-            baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
+          // force a true navigation when value changes
+          const bustedSrc = baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
           iframe.src = bustedSrc;
         }
       }
     }
 
-    // Initial load + polling
     refresh();
-    setInterval(refresh, 1500);
+    setInterval(refresh, 750); // faster polling; you can raise/lower
   </script>
 </body>
 </html>
