@@ -13,7 +13,6 @@
   <iframe id="vdo" allow="camera; microphone; autoplay; display-capture" src="about:blank"></iframe>
 
   <script>
-    // 1) Set this to your published CSV URL (OBS_EXPORT tab)
     const EXPORT_CSV_URL =
       "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpG2Z5s4KvRw5iYM8AokvwxM6HEE5q1U2WWDOyOfyz3UBrAFnV80t7HVyK9iuA8SNxMS1bo0kj-e2Z/pub?gid=2053858318&single=true&output=csv";
 
@@ -23,12 +22,10 @@
     if (!slot || !type) throw new Error("Missing ?slot= and/or ?type=");
 
     function parseCsvKeyValue(text) {
-      // expects: key,value\nkey,value\n ...
       const lines = text.trim().split(/\r?\n/);
       const out = {};
-      for (let i = 1; i < lines.length; i++) { // skip header row
+      for (let i = 1; i < lines.length; i++) { // skip header
         const line = lines[i];
-        // Basic CSV split (handles common cases). Keep sheet values simple (no commas) for best results.
         const comma = line.indexOf(",");
         if (comma === -1) continue;
         const k = line.slice(0, comma).replace(/^"|"$/g, "").trim();
@@ -39,21 +36,15 @@
     }
 
     const ALLOW_ATTR = "camera; microphone; autoplay; display-capture";
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    function sleep(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    // Replace the iframe node entirely to force OBS/CEF to drop the old page/WebRTC session immediately.
     async function hardSwapTo(url) {
       const old = document.getElementById("vdo");
       if (!old) return;
 
-      // Step 1: force teardown
       try { old.src = "about:blank"; } catch (e) {}
       await sleep(50);
 
-      // Step 2: replace node (stronger than just changing src)
       const fresh = document.createElement("iframe");
       fresh.id = "vdo";
       fresh.allow = ALLOW_ATTR;
@@ -65,37 +56,56 @@
       old.parentNode.replaceChild(fresh, old);
     }
 
-    // Track the last base URL so we only swap when the sheet value actually changes
     let lastBaseSrc = null;
 
+    // --- NEW: prevent overlap / out-of-order swaps ---
+    let inFlight = false;
+    let requestSeq = 0;
+
     async function refresh() {
-      // cache-buster so OBS/GitHub caching doesn’t bite you
-      const url = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
+      if (inFlight) return;           // lock: only one refresh at a time
+      inFlight = true;
 
-      const csv = await res.text();
-      const kv = parseCsvKeyValue(csv);
+      const mySeq = ++requestSeq;     // sequence id for this run
 
-      const key = `slot${slot}_${type}`;
-      const baseSrc = (kv[key] || "about:blank").trim();
+      try {
+        const csvUrl = EXPORT_CSV_URL + (EXPORT_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+        const res = await fetch(csvUrl, { cache: "no-store" });
+        if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
 
-      // Only act if the sheet value actually changed
-      if (baseSrc !== lastBaseSrc) {
-        lastBaseSrc = baseSrc;
+        const csv = await res.text();
+        const kv = parseCsvKeyValue(csv);
 
-        if (!baseSrc || baseSrc === "about:blank") {
-          await hardSwapTo("about:blank");
-          return;
+        const key = `slot${slot}_${type}`;
+        const raw = kv[key];
+
+        // If the key is missing entirely, do nothing (prevents flicker to blank on bad reads)
+        if (typeof raw === "undefined") return;
+
+        const baseSrc = (raw || "about:blank").trim();
+
+        // If a newer refresh started while we were waiting, ignore this result
+        if (mySeq !== requestSeq) return;
+
+        if (baseSrc !== lastBaseSrc) {
+          lastBaseSrc = baseSrc;
+
+          if (!baseSrc || baseSrc === "about:blank") {
+            await hardSwapTo("about:blank");
+          } else {
+            const busted = baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
+            await hardSwapTo(busted);
+          }
         }
-
-        // Force a true navigation on swap (helps with redirect + caching edge cases)
-        const bustedSrc = baseSrc + (baseSrc.includes("?") ? "&" : "?") + "_r=" + Date.now();
-        await hardSwapTo(bustedSrc);
+      } catch (e) {
+        // swallow errors so we don't “blank-flip” on transient fetch issues
+        // (OBS console will still show the error if you open DevTools)
+        // console.error(e);
+      } finally {
+        inFlight = false;
       }
     }
 
-    // Initial load + polling
     refresh();
     setInterval(refresh, 750);
   </script>
